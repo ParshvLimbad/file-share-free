@@ -1,0 +1,12 @@
+{
+  "mcp": {
+    "neon": {
+      "type": "remote",
+      "url": "https://mcp.neon.tech/mcp",
+      "enabled": true,
+      "headers": {
+        "Authorization": "Bearer napi_ixy47aufd70t5mp96qri0afkxlf5o67o1m9x3tagr1okqgho7o0dzny07ha6nehp"
+      }
+    }
+  }
+}

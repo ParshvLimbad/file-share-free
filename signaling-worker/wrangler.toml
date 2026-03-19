@@ -1,0 +1,16 @@
+name = "drop-signaling"
+main = "src/worker.ts"
+compatibility_date = "2025-01-01"
+
+[vars]
+ENVIRONMENT = "production"
+
+# KV namespace for ephemeral signaling data (offers/answers)
+# Create with: wrangler kv:namespace create SIGNALING_KV
+[[kv_namespaces]]
+binding = "SIGNALING_KV"
+id = "948a72d3c87544d9abc6dbf21c998b70"
+
+# Secrets (set with: wrangler secret put <NAME>)
+# - NEON_DATABASE_URL: postgres connection string from Neon
+# - GOOGLE_CLIENT_ID: Google OAuth client ID for token verification
