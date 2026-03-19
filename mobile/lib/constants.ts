@@ -65,9 +65,10 @@ export const SHARE_CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // no I,L,O,0
 
 // Subscription
 export const PRO_MONTHLY_PRICE = '$5';
-export const REVENUECAT_API_KEY = '__REVENUECAT_API_KEY__';
-export const ADMOB_INTERSTITIAL_ID = '__ADMOB_INTERSTITIAL_ID__';
-export const ADMOB_REWARDED_ID = '__ADMOB_REWARDED_ID__';
+export const REVENUECAT_API_KEY = 'test_qhEXfRxPlmEManqXOiRZSWCMhNg';
+export const ADMOB_INTERSTITIAL_ID = 'ca-app-pub-3237855763291333/4731609857';
+export const ADMOB_REWARDED_ID = 'ca-app-pub-3237855763291333/5751512638';
 
-// Auth
-export const GOOGLE_CLIENT_ID = '__GOOGLE_CLIENT_ID__';
+// Auth (Neon Auth - Better Auth powered)
+export const NEON_AUTH_URL = 'https://ep-weathered-rice-agaojseh.neonauth.c-2.eu-central-1.aws.neon.tech/neondb/auth';
+export const NEON_AUTH_JWKS_URL = 'https://ep-weathered-rice-agaojseh.neonauth.c-2.eu-central-1.aws.neon.tech/neondb/auth/.well-known/jwks.json';

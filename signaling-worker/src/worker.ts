@@ -3,7 +3,6 @@ import { neon } from '@neondatabase/serverless';
 export interface Env {
   SIGNALING_KV: KVNamespace;
   NEON_DATABASE_URL: string;
-  GOOGLE_CLIENT_ID: string;
 }
 
 // CORS headers for mobile app
@@ -36,9 +35,9 @@ export default {
         return handleSignal(request, env);
       }
 
-      // ── Auth endpoints ──
-      if (path === '/auth/google' && request.method === 'POST') {
-        return handleGoogleAuth(request, env);
+      // ── Auth sync (from Neon Auth) ──
+      if (path === '/auth/sync' && request.method === 'POST') {
+        return handleAuthSync(request, env);
       }
 
       // ── Usage endpoints ──
@@ -57,6 +56,14 @@ export default {
       if (path.startsWith('/user/') && request.method === 'GET') {
         const userId = path.split('/user/')[1];
         return handleGetUser(userId, env);
+      }
+
+      // ── Auth redirect (relay from Neon Auth → app deep link) ──
+      if (path === '/auth/redirect') {
+        return handleAuthRedirect(request);
+      }
+      if ((path === '/' || path === '/auth/callback') && request.method === 'GET') {
+        return handleAuthRedirect(request);
       }
 
       // ── Health check ──
@@ -139,62 +146,30 @@ async function handleSignal(request: Request, env: Env): Promise<Response> {
   }
 }
 
-// ─── GOOGLE AUTH ───
+// ─── AUTH SYNC (Neon Auth) ───
 
-async function handleGoogleAuth(request: Request, env: Env): Promise<Response> {
-  const { idToken } = await request.json() as any;
+async function handleAuthSync(request: Request, env: Env): Promise<Response> {
+  const { id, email, name, picture } = await request.json() as any;
 
-  if (!idToken) {
-    return json({ error: 'Missing idToken' }, 400);
-  }
-
-  // Verify Google ID token
-  const tokenInfo = await verifyGoogleToken(idToken, env.GOOGLE_CLIENT_ID);
-  if (!tokenInfo) {
-    return json({ error: 'Invalid token' }, 401);
+  if (!id) {
+    return json({ error: 'Missing user id' }, 400);
   }
 
   const sql = neon(env.NEON_DATABASE_URL);
 
-  // Upsert user
+  // Upsert user from Neon Auth data
   const result = await sql`
     INSERT INTO users (id, email, name, picture)
-    VALUES (${tokenInfo.sub}, ${tokenInfo.email}, ${tokenInfo.name}, ${tokenInfo.picture})
+    VALUES (${id}, ${email || ''}, ${name || ''}, ${picture || ''})
     ON CONFLICT (id) DO UPDATE SET
-      email = EXCLUDED.email,
-      name = EXCLUDED.name,
-      picture = EXCLUDED.picture,
+      email = COALESCE(NULLIF(EXCLUDED.email, ''), users.email),
+      name = COALESCE(NULLIF(EXCLUDED.name, ''), users.name),
+      picture = COALESCE(NULLIF(EXCLUDED.picture, ''), users.picture),
       updated_at = NOW()
     RETURNING id, email, name, picture, plan, plan_expires_at, created_at
   `;
 
   return json({ user: result[0] });
-}
-
-async function verifyGoogleToken(
-  idToken: string,
-  clientId: string
-): Promise<any | null> {
-  try {
-    const response = await fetch(
-      `https://oauth2.googleapis.com/tokeninfo?id_token=${idToken}`
-    );
-    if (!response.ok) return null;
-
-    const data = await response.json() as any;
-
-    // Verify the audience matches our client ID
-    if (data.aud !== clientId) return null;
-
-    return {
-      sub: data.sub,
-      email: data.email,
-      name: data.name,
-      picture: data.picture,
-    };
-  } catch {
-    return null;
-  }
 }
 
 // ─── USAGE TRACKING ───
@@ -285,4 +260,81 @@ async function handleGetUser(userId: string, env: Env): Promise<Response> {
   }
 
   return json({ user });
+}
+
+// ─── AUTH REDIRECT (relay Neon Auth → mobile app) ───
+
+function handleAuthRedirect(request: Request): Response {
+  const url = new URL(request.url);
+  // Forward query params from Neon Auth to the app deep link
+  const params = url.searchParams.toString();
+  const appScheme = 'dropshare';
+
+  // Serve an HTML page that redirects to the app
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Redirecting to Drop...</title>
+  <style>
+    body {
+      background: #050508;
+      color: #f0f0f5;
+      font-family: -apple-system, sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      margin: 0;
+      text-align: center;
+    }
+    .container { padding: 40px; }
+    h2 { margin-bottom: 8px; }
+    p { color: #8888a0; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>✅ Signed in!</h2>
+    <p>Redirecting back to Drop...</p>
+  </div>
+  <script>
+    function getParams() {
+      var search = window.location.search.replace(/^\\?/, '');
+      if (search) return search;
+      var hash = window.location.hash.replace(/^#/, '');
+      return hash;
+    }
+
+    var params = getParams();
+    var statusEl = document.querySelector('#status');
+
+    if (!params) {
+      statusEl.textContent = 'Missing auth parameters. Please retry sign-in.';
+    } else {
+      // Try the custom scheme (dev client / standalone)
+      var deepLink = '${appScheme}://auth-callback' + (params ? '?' + params : '');
+      // Also try exp:// for Expo Go
+      var expoLink = 'exp://192.168.29.188:8081/--/auth-callback' + (params ? '?' + params : '');
+
+      // Try custom scheme first
+      window.location.href = deepLink;
+
+      // Fallback to Expo Go scheme after 1s
+      setTimeout(function() {
+        window.location.href = expoLink;
+      }, 1000);
+    }
+  </script>
+</body>
+</html>`;
+
+  return new Response(html, {
+    status: 200,
+    headers: {
+      'Content-Type': 'text/html; charset=utf-8',
+      ...corsHeaders,
+    },
+  });
 }

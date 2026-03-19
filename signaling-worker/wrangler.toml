@@ -13,4 +13,3 @@ id = "948a72d3c87544d9abc6dbf21c998b70"
 
 # Secrets (set with: wrangler secret put <NAME>)
 # - NEON_DATABASE_URL: postgres connection string from Neon
-# - GOOGLE_CLIENT_ID: Google OAuth client ID for token verification

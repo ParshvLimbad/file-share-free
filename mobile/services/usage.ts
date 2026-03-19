@@ -1,10 +1,25 @@
 // Server-side usage tracking (syncs with Neon via Cloudflare Worker)
-import { SIGNALING_SERVER_URL, FREE_DAILY_LIMIT_BYTES, AD_BONUS_BYTES } from '../lib/constants';
-import { getDailyUsage, getBonusBytes, addDailyUsage, addBonusBytes } from '../lib/storage';
+import {
+  SIGNALING_SERVER_URL,
+  FREE_DAILY_LIMIT_BYTES,
+  AD_BONUS_BYTES,
+  ADS_REQUIRED_FOR_BONUS,
+} from '../lib/constants';
+import {
+  getDailyUsage,
+  getBonusBytes,
+  addDailyUsage,
+  addBonusBytes,
+  getAdWatchesToday,
+  setAdWatchesToday,
+} from '../lib/storage';
 
 export interface UsageInfo {
   bytesUsed: number;
   bonusBytes: number;
+  adWatchesToday: number;
+  adsRemaining: number;
+  canWatchAds: boolean;
   totalLimit: number;
   remaining: number;
   percentUsed: number;
@@ -18,6 +33,7 @@ export async function getCurrentUsage(
 ): Promise<UsageInfo> {
   let bytesUsed = await getDailyUsage();
   let bonusBytes = await getBonusBytes();
+  let adWatchesToday = await getAdWatchesToday();
 
   // Try to sync with server
   if (userId && !SIGNALING_SERVER_URL.startsWith('__')) {
@@ -29,6 +45,11 @@ export async function getCurrentUsage(
         const data = await response.json();
         bytesUsed = Math.max(bytesUsed, data.bytes_transferred || 0);
         bonusBytes = Math.max(bonusBytes, data.bonus_bytes || 0);
+        const serverAdWatches = data.ad_watches_today || 0;
+        if (serverAdWatches > adWatchesToday) {
+          adWatchesToday = serverAdWatches;
+          await setAdWatchesToday(serverAdWatches);
+        }
       }
     } catch {
       // Fall back to local data
@@ -39,11 +60,17 @@ export async function getCurrentUsage(
     ? 50 * 1024 * 1024 * 1024 // 50 GB
     : FREE_DAILY_LIMIT_BYTES + bonusBytes;
   const remaining = Math.max(0, totalLimit - bytesUsed);
-  const percentUsed = Math.min(100, Math.round((bytesUsed / totalLimit) * 100));
+  const percentUsed =
+    totalLimit > 0 ? Math.min(100, Math.round((bytesUsed / totalLimit) * 100)) : 0;
+  const adsRemaining = Math.max(0, ADS_REQUIRED_FOR_BONUS - adWatchesToday);
+  const canWatchAds = !isPro && adsRemaining > 0;
 
   return {
     bytesUsed,
     bonusBytes,
+    adWatchesToday,
+    adsRemaining,
+    canWatchAds,
     totalLimit,
     remaining,
     percentUsed,
@@ -74,9 +101,19 @@ export async function recordTransferUsage(
 }
 
 // Add bonus bytes from watching ads
-export async function recordAdBonus(userId: string | null): Promise<void> {
+export async function recordAdBonus(userId: string | null): Promise<boolean> {
+  const currentAdWatches = await getAdWatchesToday();
+  if (currentAdWatches >= ADS_REQUIRED_FOR_BONUS) {
+    return false;
+  }
+
   // Save locally
   await addBonusBytes(AD_BONUS_BYTES);
+  const newCount = Math.min(
+    ADS_REQUIRED_FOR_BONUS,
+    currentAdWatches + ADS_REQUIRED_FOR_BONUS
+  );
+  await setAdWatchesToday(newCount);
 
   // Sync to server if logged in
   if (userId && !SIGNALING_SERVER_URL.startsWith('__')) {
@@ -90,6 +127,8 @@ export async function recordAdBonus(userId: string | null): Promise<void> {
       // Local is already saved
     }
   }
+
+  return true;
 }
 
 // Check if a file can be transferred (size within limits)
@@ -118,7 +157,9 @@ export async function canTransferFile(
   if (usage.remaining < fileSize) {
     return {
       allowed: false,
-      reason: `Daily limit reached. ${usage.bonusBytes > 0 ? 'Watch more ads or u' : 'U'}pgrade to Pro for unlimited transfers.`,
+      reason: usage.canWatchAds
+        ? `Daily limit reached. Watch ${ADS_REQUIRED_FOR_BONUS} ads to unlock +1GB or upgrade to Pro for unlimited transfers.`
+        : 'Daily limit reached. Ad limit reached today. Upgrade to Pro or try again tomorrow.',
     };
   }
 

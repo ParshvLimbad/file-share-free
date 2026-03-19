@@ -29,6 +29,30 @@ export async function initializeRevenueCat(): Promise<void> {
   }
 }
 
+export async function logInToRevenueCat(appUserId: string): Promise<void> {
+  if (!Purchases || REVENUECAT_API_KEY.startsWith('__')) {
+    return;
+  }
+
+  try {
+    await Purchases.logIn(appUserId);
+  } catch (error) {
+    console.error('[Subscription] logIn error:', error);
+  }
+}
+
+export async function logOutOfRevenueCat(): Promise<void> {
+  if (!Purchases || REVENUECAT_API_KEY.startsWith('__')) {
+    return;
+  }
+
+  try {
+    await Purchases.logOut();
+  } catch (error) {
+    console.error('[Subscription] logOut error:', error);
+  }
+}
+
 export async function checkSubscriptionStatus(): Promise<{
   isPro: boolean;
   expiresAt: string | null;

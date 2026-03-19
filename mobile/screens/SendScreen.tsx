@@ -11,13 +11,19 @@ import {
 import { SafeAreaView, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
-import { COLORS } from '../lib/constants';
+import { COLORS, ADS_REQUIRED_FOR_BONUS } from '../lib/constants';
 import { useP2PSend } from '../lib/useP2PSend';
 import { formatBytes, getFileIcon } from '../lib/fileUtils';
 import { addTransferRecord } from '../lib/storage';
-import { getStoredUser } from '../services/auth';
-import { canTransferFile, recordTransferUsage } from '../services/usage';
+import { getStoredUser, updateStoredUserPlan } from '../services/auth';
+import { canTransferFile, getCurrentUsage, recordTransferUsage, UsageInfo } from '../services/usage';
 import { showInterstitial, loadInterstitial } from '../services/ads';
+import {
+  checkSubscriptionStatus,
+  isSubscriptionAvailable,
+  purchaseProSubscription,
+} from '../services/subscription';
+import { useAuth } from '../contexts/auth';
 import ShareCodeDisplay from '../components/ShareCodeDisplay';
 import TransferProgress from '../components/TransferProgress';
 
@@ -30,6 +36,18 @@ interface SelectedFile {
 
 export default function SendScreen() {
   const [selectedFiles, setSelectedFiles] = useState<SelectedFile[]>([]);
+  const { user, setUser } = useAuth();
+  const [usage, setUsage] = useState<UsageInfo>({
+    bytesUsed: 0,
+    bonusBytes: 0,
+    adWatchesToday: 0,
+    adsRemaining: ADS_REQUIRED_FOR_BONUS,
+    canWatchAds: true,
+    totalLimit: 1073741824,
+    remaining: 1073741824,
+    percentUsed: 0,
+    canTransfer: true,
+  });
   const { status, code, progress, speed, error, isWebRTCReady, startSend, cancel } =
     useP2PSend();
 
@@ -37,6 +55,18 @@ export default function SendScreen() {
   useEffect(() => {
     loadInterstitial();
   }, []);
+
+  const loadUsage = useCallback(async () => {
+    const usageInfo = await getCurrentUsage(
+      user?.id || null,
+      user?.plan === 'pro'
+    );
+    setUsage(usageInfo);
+  }, [user]);
+
+  useEffect(() => {
+    loadUsage();
+  }, [loadUsage]);
 
   // Record completed transfer
   useEffect(() => {
@@ -57,9 +87,11 @@ export default function SendScreen() {
             direction: 'sent',
           });
         }
+
+        await loadUsage();
       })();
     }
-  }, [status, selectedFiles]);
+  }, [status, selectedFiles, loadUsage]);
 
   const pickFiles = useCallback(async () => {
     try {
@@ -118,12 +150,32 @@ export default function SendScreen() {
     await startSend(selectedFiles);
   }, [selectedFiles, isWebRTCReady, startSend]);
 
+  const handleUpgrade = useCallback(async () => {
+    const purchased = await purchaseProSubscription();
+    if (purchased) {
+      if (isSubscriptionAvailable) {
+        const status = await checkSubscriptionStatus();
+        if (status.isPro) {
+          await updateStoredUserPlan('pro', status.expiresAt);
+          setUser((prev) =>
+            prev ? { ...prev, plan: 'pro', planExpiresAt: status.expiresAt } : prev
+          );
+        }
+      } else {
+        await updateStoredUserPlan('pro', null);
+        setUser((prev) => (prev ? { ...prev, plan: 'pro', planExpiresAt: null } : prev));
+      }
+      await loadUsage();
+    }
+  }, [loadUsage, setUser]);
+
   const handleNewTransfer = useCallback(() => {
     setSelectedFiles([]);
     cancel();
   }, [cancel]);
 
   const totalSize = selectedFiles.reduce((sum, f) => sum + f.size, 0);
+  const isPro = user?.plan === 'pro';
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: COLORS.bgDeep }}>
@@ -132,6 +184,106 @@ export default function SendScreen() {
         backgroundColor={COLORS.bgDeep}
         contentContainerStyle={{ padding: 20, paddingBottom: 40 }}
       >
+        {/* Usage Card */}
+        <Card
+          backgroundColor={COLORS.bgCard}
+          borderRadius={18}
+          borderWidth={1}
+          borderColor={COLORS.border}
+          padding="$4"
+          marginBottom="$4"
+        >
+          <YStack gap="$3">
+            <XStack justifyContent="space-between" alignItems="center">
+              <Text
+                color={COLORS.textMuted}
+                fontSize={11}
+                fontWeight="600"
+                textTransform="uppercase"
+                letterSpacing={1}
+              >
+                Daily Usage
+              </Text>
+              <XStack
+                backgroundColor={isPro ? COLORS.primaryGlow : COLORS.warningBg}
+                paddingHorizontal="$2.5"
+                paddingVertical="$1"
+                borderRadius={8}
+                borderWidth={1}
+                borderColor={isPro ? COLORS.primary + '20' : COLORS.warning + '20'}
+              >
+                <Text
+                  color={isPro ? COLORS.primary : COLORS.warning}
+                  fontSize={11}
+                  fontWeight="700"
+                >
+                  {isPro ? 'PRO' : 'FREE'}
+                </Text>
+              </XStack>
+            </XStack>
+
+            {/* Progress bar */}
+            <YStack gap="$2">
+              <YStack
+                height={8}
+                borderRadius={4}
+                backgroundColor={COLORS.bgElevated}
+                overflow="hidden"
+              >
+                <YStack
+                  height="100%"
+                  width={`${usage.percentUsed}%` as any}
+                  borderRadius={4}
+                  backgroundColor={
+                    usage.percentUsed > 80
+                      ? COLORS.error
+                      : usage.percentUsed > 50
+                      ? COLORS.warning
+                      : COLORS.primary
+                  }
+                />
+              </YStack>
+              <XStack justifyContent="space-between">
+                <Text color={COLORS.textSecondary} fontSize={12}>
+                  {formatBytes(usage.bytesUsed)} used
+                </Text>
+                <Text color={COLORS.textMuted} fontSize={12}>
+                  {formatBytes(usage.totalLimit)} total
+                </Text>
+              </XStack>
+              {usage.bonusBytes > 0 && (
+                <Text color={COLORS.success} fontSize={11}>
+                  +{formatBytes(usage.bonusBytes)} bonus from ads
+                </Text>
+              )}
+            </YStack>
+
+            {!isPro && (
+              <Button
+                size="$4"
+                backgroundColor={COLORS.primary}
+                color={COLORS.bgDeep}
+                fontWeight="700"
+                borderRadius={12}
+                borderWidth={1}
+                borderColor={COLORS.primaryLight}
+                pressStyle={{ opacity: 0.9, scale: 0.98 }}
+                shadowColor={COLORS.primary}
+                shadowOpacity={0.35}
+                shadowRadius={12}
+                shadowOffset={{ width: 0, height: 6 }}
+                elevation={4}
+                onPress={handleUpgrade}
+                icon={
+                  <Ionicons name="diamond" size={18} color={COLORS.bgDeep} />
+                }
+              >
+                Upgrade to Pro
+              </Button>
+            )}
+          </YStack>
+        </Card>
+
         {/* Header */}
         <YStack alignItems="center" marginTop="$4" marginBottom="$6">
           <XStack alignItems="center" gap="$2.5" marginBottom="$3">

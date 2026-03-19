@@ -12,86 +12,141 @@ import { Ionicons } from '@expo/vector-icons';
 import {
   COLORS,
   PRO_MONTHLY_PRICE,
+  ADS_REQUIRED_FOR_BONUS,
 } from '../lib/constants';
 import { formatBytes } from '../lib/fileUtils';
-import { getStoredUser, clearUser, User } from '../services/auth';
+import { signInWithGoogle, signOut, updateStoredUserPlan, User } from '../services/auth';
 import { getCurrentUsage, UsageInfo, recordAdBonus } from '../services/usage';
 import { showThreeRewardedAds } from '../services/ads';
-import { purchaseProSubscription, restorePurchases } from '../services/subscription';
+import {
+  checkSubscriptionStatus,
+  isSubscriptionAvailable,
+  purchaseProSubscription,
+  restorePurchases,
+} from '../services/subscription';
+import { useAuth } from '../contexts/auth';
 
 export default function SettingsScreen() {
-  const [user, setUser] = useState<User | null>(null);
+  const { user, setUser } = useAuth();
   const [usage, setUsage] = useState<UsageInfo>({
     bytesUsed: 0,
     bonusBytes: 0,
+    adWatchesToday: 0,
+    adsRemaining: ADS_REQUIRED_FOR_BONUS,
+    canWatchAds: true,
     totalLimit: 1073741824,
     remaining: 1073741824,
     percentUsed: 0,
     canTransfer: true,
   });
   const [loadingAds, setLoadingAds] = useState(false);
+  const [signingIn, setSigningIn] = useState(false);
 
   const isPro = user?.plan === 'pro';
 
+  const loadData = useCallback(
+    async (nextUser?: User | null) => {
+      const effectiveUser = nextUser ?? user;
+      const usageInfo = await getCurrentUsage(
+        effectiveUser?.id || null,
+        effectiveUser?.plan === 'pro'
+      );
+      setUsage(usageInfo);
+    },
+    [user]
+  );
+
   useEffect(() => {
     loadData();
-  }, []);
+  }, [loadData]);
 
-  const loadData = async () => {
-    const storedUser = await getStoredUser();
-    setUser(storedUser);
-    const usageInfo = await getCurrentUsage(
-      storedUser?.id || null,
-      storedUser?.plan === 'pro'
-    );
-    setUsage(usageInfo);
-  };
-
-  const handleGoogleSignIn = useCallback(() => {
-    Alert.alert(
-      'Google Sign-In',
-      'Sign in to sync your usage across devices.\n\nTo set up:\n1. Create a Google Cloud project\n2. Enable Google Sign-In API\n3. Create OAuth credentials\n4. Add your GOOGLE_CLIENT_ID to constants.ts',
-      [{ text: 'OK' }]
-    );
-  }, []);
+  const handleGoogleSignIn = useCallback(async () => {
+    setSigningIn(true);
+    try {
+      const signedInUser = await signInWithGoogle();
+      if (signedInUser) {
+        setUser(signedInUser);
+        loadData(signedInUser);
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Sign-in failed. Please try again.');
+    } finally {
+      setSigningIn(false);
+    }
+  }, [loadData, setUser]);
 
   const handleSignOut = useCallback(async () => {
-    await clearUser();
+    await signOut();
     setUser(null);
-    loadData();
-  }, []);
+    loadData(null);
+  }, [loadData, setUser]);
 
   const handleWatchAds = useCallback(async () => {
+    if (!usage.canWatchAds) {
+      Alert.alert(
+        'Ad limit reached',
+        'You can watch only 3 ads every 24 hours. Please come back tomorrow.'
+      );
+      return;
+    }
     setLoadingAds(true);
     try {
       const watched = await showThreeRewardedAds();
       if (watched) {
-        await recordAdBonus(user?.id || null);
-        Alert.alert('🎉 Bonus Added!', 'You earned an extra 1 GB of transfer data today!');
-        loadData(); // Refresh usage
+        const recorded = await recordAdBonus(user?.id || null);
+        if (recorded) {
+          Alert.alert('🎉 Bonus Added!', 'You earned an extra 1 GB of transfer data today!');
+          loadData(); // Refresh usage
+        } else {
+          Alert.alert(
+            'Ad limit reached',
+            'You have already watched 3 ads today. Please try again tomorrow.'
+          );
+        }
       }
     } catch (error) {
       Alert.alert('Error', 'Failed to show ads. Please try again.');
     } finally {
       setLoadingAds(false);
     }
-  }, [user]);
+  }, [loadData, user, usage.canWatchAds]);
 
   const handleUpgrade = useCallback(async () => {
     const purchased = await purchaseProSubscription();
     if (purchased) {
+      if (isSubscriptionAvailable) {
+        const status = await checkSubscriptionStatus();
+        if (status.isPro) {
+          await updateStoredUserPlan('pro', status.expiresAt);
+          setUser((prev) =>
+            prev ? { ...prev, plan: 'pro', planExpiresAt: status.expiresAt } : prev
+          );
+        }
+      } else {
+        await updateStoredUserPlan('pro', null);
+        setUser((prev) => (prev ? { ...prev, plan: 'pro', planExpiresAt: null } : prev));
+      }
       Alert.alert('🎉 Welcome to Pro!', 'You now have unlimited transfers up to 50GB per file.');
       loadData();
     }
-  }, []);
+  }, [loadData, setUser]);
 
   const handleRestore = useCallback(async () => {
     const restored = await restorePurchases();
     if (restored) {
+      if (isSubscriptionAvailable) {
+        const status = await checkSubscriptionStatus();
+        if (status.isPro) {
+          await updateStoredUserPlan('pro', status.expiresAt);
+          setUser((prev) =>
+            prev ? { ...prev, plan: 'pro', planExpiresAt: status.expiresAt } : prev
+          );
+        }
+      }
       Alert.alert('Restored', 'Your Pro subscription has been restored.');
       loadData();
     }
-  }, []);
+  }, [loadData, setUser]);
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: COLORS.bgDeep }}>
@@ -198,13 +253,22 @@ export default function SettingsScreen() {
                 borderColor={COLORS.primary + '20'}
                 pressStyle={{ opacity: 0.8 }}
                 onPress={handleWatchAds}
-                disabled={loadingAds}
+                disabled={loadingAds || !usage.canWatchAds}
                 icon={
                   <Ionicons name="play-circle" size={16} color={COLORS.primary} />
                 }
               >
-                {loadingAds ? 'Playing Ads...' : 'Watch 3 Ads → Get +1 GB Free'}
+                {loadingAds
+                  ? 'Playing Ads...'
+                  : usage.canWatchAds
+                  ? 'Watch 3 Ads → Get +1 GB Free'
+                  : 'Ad limit reached today'}
               </Button>
+            )}
+            {!isPro && !usage.canWatchAds && (
+              <Text color={COLORS.textMuted} fontSize={11}>
+                Come back in 24 hours to watch more ads.
+              </Text>
             )}
           </YStack>
         </Card>
@@ -360,8 +424,9 @@ export default function SettingsScreen() {
                     <Ionicons name="logo-google" size={18} color={COLORS.textSecondary} />
                   }
                   onPress={handleGoogleSignIn}
+                  disabled={signingIn}
                 >
-                  Sign in with Google
+                  {signingIn ? 'Signing in...' : 'Sign in with Google'}
                 </Button>
                 <Text color={COLORS.textMuted} fontSize={12}>
                   Sign in to sync usage and subscription across devices

@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "Drop",
-    "slug": "drop-share",
+    "slug": "drop",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -31,7 +31,20 @@
     },
     "plugins": [
       "expo-font",
-      "expo-document-picker"
-    ]
+      "expo-document-picker",
+      "expo-web-browser",
+      [
+        "react-native-google-mobile-ads",
+        {
+          "androidAppId": "ca-app-pub-3237855763291333~8095572547"
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "38ea2142-9b65-48bf-9d5a-e23552b9dbfa"
+      }
+    },
+    "owner": "electr0069"
   }
 }

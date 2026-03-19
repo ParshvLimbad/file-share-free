@@ -97,3 +97,24 @@ export async function addBonusBytes(bytes: number): Promise<void> {
     console.error('Failed to update bonus bytes:', error);
   }
 }
+
+export async function getAdWatchesToday(): Promise<number> {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const key = `@ad_watches_${today}`;
+    const data = await AsyncStorage.getItem(key);
+    return data ? parseInt(data, 10) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+export async function setAdWatchesToday(count: number): Promise<void> {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const key = `@ad_watches_${today}`;
+    await AsyncStorage.setItem(key, String(count));
+  } catch (error) {
+    console.error('Failed to update ad watches:', error);
+  }
+}
