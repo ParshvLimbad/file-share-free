@@ -468,7 +468,7 @@ export default function SettingsScreen() {
               },
               {
                 icon: 'information-circle' as const,
-                label: 'Version 1.0.0',
+                label: 'Version 1.0.1',
                 sublabel: 'Drop – P2P File Transfer',
               },
             ].map((item) => (

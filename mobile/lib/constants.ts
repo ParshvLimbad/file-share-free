@@ -65,7 +65,7 @@ export const SHARE_CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // no I,L,O,0
 
 // Subscription
 export const PRO_MONTHLY_PRICE = '$5';
-export const REVENUECAT_API_KEY = 'test_qhEXfRxPlmEManqXOiRZSWCMhNg';
+export const REVENUECAT_API_KEY = 'goog_GnWRhCOSgyDqFYwjWleXEsPVcfx';
 export const ADMOB_INTERSTITIAL_ID = 'ca-app-pub-3237855763291333/4731609857';
 export const ADMOB_REWARDED_ID = 'ca-app-pub-3237855763291333/5751512638';
 

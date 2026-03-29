@@ -137,3 +137,10 @@ dist
 # Vite logs files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# Service account keys / secrets
+*.p12
+*.pem
+*-key.json
+*service*account*.json
+job-app-*.json
