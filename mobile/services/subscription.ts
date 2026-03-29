@@ -16,8 +16,8 @@ try {
 export const isSubscriptionAvailable = !!Purchases;
 
 // Track initialization state
-let initPromise: Promise<void> | null = null;
 let isInitialized = false;
+let initAttempted = false;
 
 export async function initializeRevenueCat(): Promise<void> {
   if (!Purchases || REVENUECAT_API_KEY.startsWith('__')) {
@@ -25,7 +25,8 @@ export async function initializeRevenueCat(): Promise<void> {
     return;
   }
 
-  if (isInitialized) return;
+  if (isInitialized || initAttempted) return;
+  initAttempted = true;
 
   try {
     Purchases.configure({ apiKey: REVENUECAT_API_KEY });
