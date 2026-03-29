@@ -39,10 +39,15 @@ export async function signInWithGoogle(): Promise<User | null> {
   // Step 1: Get the Google OAuth URL from Neon Auth / Better Auth
   let googleAuthUrl: string;
   try {
+    const origin = signalingBase
+      ? new URL(signalingBase).origin
+      : 'https://drop-signaling.drop-share-free.workers.dev';
+
     const response = await fetch(`${NEON_AUTH_URL}/sign-in/social`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'Origin': origin,
       },
       body: JSON.stringify({
         provider: 'google',

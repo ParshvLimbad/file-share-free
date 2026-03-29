@@ -15,24 +15,38 @@ try {
 
 export const isSubscriptionAvailable = !!Purchases;
 
+// Track initialization state
+let initPromise: Promise<void> | null = null;
+let isInitialized = false;
+
 export async function initializeRevenueCat(): Promise<void> {
   if (!Purchases || REVENUECAT_API_KEY.startsWith('__')) {
     console.log('[Subscription] Skipping RevenueCat init (not configured)');
     return;
   }
 
+  if (isInitialized) return;
+
   try {
     Purchases.configure({ apiKey: REVENUECAT_API_KEY });
+    isInitialized = true;
     console.log('[Subscription] RevenueCat initialized');
   } catch (error) {
     console.error('[Subscription] Init error:', error);
   }
 }
 
-export async function logInToRevenueCat(appUserId: string): Promise<void> {
-  if (!Purchases || REVENUECAT_API_KEY.startsWith('__')) {
-    return;
+// Ensure RevenueCat is initialized before any SDK call
+async function ensureInitialized(): Promise<boolean> {
+  if (!Purchases || REVENUECAT_API_KEY.startsWith('__')) return false;
+  if (!isInitialized) {
+    await initializeRevenueCat();
   }
+  return isInitialized;
+}
+
+export async function logInToRevenueCat(appUserId: string): Promise<void> {
+  if (!(await ensureInitialized())) return;
 
   try {
     await Purchases.logIn(appUserId);
@@ -42,9 +56,7 @@ export async function logInToRevenueCat(appUserId: string): Promise<void> {
 }
 
 export async function logOutOfRevenueCat(): Promise<void> {
-  if (!Purchases || REVENUECAT_API_KEY.startsWith('__')) {
-    return;
-  }
+  if (!(await ensureInitialized())) return;
 
   try {
     await Purchases.logOut();
@@ -57,7 +69,7 @@ export async function checkSubscriptionStatus(): Promise<{
   isPro: boolean;
   expiresAt: string | null;
 }> {
-  if (!Purchases || REVENUECAT_API_KEY.startsWith('__')) {
+  if (!(await ensureInitialized())) {
     return { isPro: false, expiresAt: null };
   }
 
@@ -79,8 +91,8 @@ export async function checkSubscriptionStatus(): Promise<{
 }
 
 export async function purchaseProSubscription(): Promise<boolean> {
-  if (!Purchases || REVENUECAT_API_KEY.startsWith('__')) {
-    // Mock purchase flow
+  if (!(await ensureInitialized())) {
+    // Mock purchase flow when SDK not available
     return new Promise((resolve) => {
       Alert.alert(
         '💎 Upgrade to Pro',
@@ -115,7 +127,7 @@ export async function purchaseProSubscription(): Promise<boolean> {
 }
 
 export async function restorePurchases(): Promise<boolean> {
-  if (!Purchases || REVENUECAT_API_KEY.startsWith('__')) {
+  if (!(await ensureInitialized())) {
     Alert.alert('Info', 'Subscription restoration requires RevenueCat setup.');
     return false;
   }
