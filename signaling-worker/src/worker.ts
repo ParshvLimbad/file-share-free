@@ -266,11 +266,11 @@ async function handleGetUser(userId: string, env: Env): Promise<Response> {
 
 function handleAuthRedirect(request: Request): Response {
   const url = new URL(request.url);
-  // Forward query params from Neon Auth to the app deep link
+  // Forward all query params from Neon Auth to the app deep link
   const params = url.searchParams.toString();
   const appScheme = 'dropshare';
 
-  // Serve an HTML page that redirects to the app
+  // Serve an HTML page that redirects to the app via deep link
   const html = `<!DOCTYPE html>
 <html>
 <head>
@@ -292,40 +292,31 @@ function handleAuthRedirect(request: Request): Response {
     .container { padding: 40px; }
     h2 { margin-bottom: 8px; }
     p { color: #8888a0; font-size: 14px; }
+    a { color: #22d3ee; font-size: 16px; margin-top: 16px; display: inline-block; }
   </style>
 </head>
 <body>
   <div class="container">
     <h2>✅ Signed in!</h2>
-    <p>Redirecting back to Drop...</p>
+    <p id="status">Redirecting back to Drop...</p>
+    <a id="manual-link" style="display:none" href="#">Tap here to open Drop</a>
   </div>
   <script>
-    function getParams() {
-      var search = window.location.search.replace(/^\\?/, '');
-      if (search) return search;
-      var hash = window.location.hash.replace(/^#/, '');
-      return hash;
-    }
+    var params = window.location.search.replace(/^\\?/, '') || window.location.hash.replace(/^#/, '');
+    var deepLink = '${appScheme}://auth-callback' + (params ? '?' + params : '');
+    var manualLink = document.getElementById('manual-link');
 
-    var params = getParams();
-    var statusEl = document.querySelector('#status');
+    // Try to open the app immediately
+    window.location.href = deepLink;
 
-    if (!params) {
-      statusEl.textContent = 'Missing auth parameters. Please retry sign-in.';
-    } else {
-      // Try the custom scheme (dev client / standalone)
-      var deepLink = '${appScheme}://auth-callback' + (params ? '?' + params : '');
-      // Also try exp:// for Expo Go
-      var expoLink = 'exp://192.168.29.188:8081/--/auth-callback' + (params ? '?' + params : '');
-
-      // Try custom scheme first
-      window.location.href = deepLink;
-
-      // Fallback to Expo Go scheme after 1s
-      setTimeout(function() {
-        window.location.href = expoLink;
-      }, 1000);
-    }
+    // Show manual link as fallback after 2s
+    setTimeout(function() {
+      if (manualLink) {
+        manualLink.href = deepLink;
+        manualLink.style.display = 'inline-block';
+        document.getElementById('status').textContent = 'If the app did not open automatically:';
+      }
+    }, 2000);
   </script>
 </body>
 </html>`;
@@ -338,3 +329,4 @@ function handleAuthRedirect(request: Request): Response {
     },
   });
 }
+

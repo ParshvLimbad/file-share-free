@@ -7,7 +7,6 @@ import * as WebBrowser from 'expo-web-browser';
 import * as Linking from 'expo-linking';
 
 const USER_KEY = '@user_data';
-let sessionChallengeCookies: string | null = null;
 
 export interface User {
   id: string;
@@ -21,169 +20,165 @@ export interface User {
 // ─── SIGN IN WITH GOOGLE ───
 
 export async function signInWithGoogle(): Promise<User | null> {
+  const signalingBase = SIGNALING_SERVER_URL?.startsWith('http')
+    ? SIGNALING_SERVER_URL.replace(/\/$/, '')
+    : null;
+
+  // Use the worker relay as callback (Neon Auth requires https callbacks)
+  // The worker at /auth/redirect serves HTML that deep-links back to the app
+  const callbackUrl = signalingBase
+    ? `${signalingBase}/auth/redirect`
+    : Linking.createURL('auth-callback');
+
+  // For openAuthSessionAsync, we listen for the deep link return
+  const appReturnUrl = Linking.createURL('auth-callback');
+
+  console.log('[Auth] callbackUrl:', callbackUrl);
+  console.log('[Auth] appReturnUrl:', appReturnUrl);
+
+  // Step 1: Get the Google OAuth URL from Neon Auth / Better Auth
+  let googleAuthUrl: string;
   try {
-    const hasHttpsCallback =
-      SIGNALING_SERVER_URL && SIGNALING_SERVER_URL.startsWith('http');
-    const signalingBase = hasHttpsCallback
-      ? SIGNALING_SERVER_URL.replace(/\/$/, '')
-      : null;
-
-    // Neon Auth only allows http/https callback domains
-    const appCallbackUrl = signalingBase
-      ? `${signalingBase}/auth/redirect`
-      : Linking.createURL('auth-callback');
-
-    const authOrigin = signalingBase
-      ? new URL(signalingBase).origin
-      : 'dropshare://';
-
-    // POST to Better Auth API to get the Google OAuth redirect URL
-    // We use the app's deep link as callbackURL and set Origin header
-    // so Better Auth knows this is a trusted origin
     const response = await fetch(`${NEON_AUTH_URL}/sign-in/social`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Origin': authOrigin,
       },
       body: JSON.stringify({
         provider: 'google',
-        callbackURL: appCallbackUrl,
+        callbackURL: callbackUrl,
       }),
     });
 
     if (!response.ok) {
       const errorText = await response.text();
       console.error('[Auth] Sign-in API error:', response.status, errorText);
-      return null;
+      throw new Error(`Auth server error (${response.status})`);
     }
 
     const data = await response.json();
-    const googleAuthUrl = data.url || data.redirect;
+    googleAuthUrl = data.url || data.redirect;
 
     if (!googleAuthUrl) {
       console.error('[Auth] No auth URL returned:', JSON.stringify(data));
-      return null;
+      throw new Error('No OAuth URL received from auth server');
     }
-
-    // Capture Neon Auth challenge cookies (used later with session verifier)
-    await captureSessionChallengeCookies(googleAuthUrl);
-
-    // Open Google sign-in in the system browser
-    // expo-web-browser will detect when the browser redirects to our app scheme
-    const result = await WebBrowser.openAuthSessionAsync(
-      googleAuthUrl,
-      appCallbackUrl
-    );
-
-    if (result.type !== 'success' || !result.url) {
-      console.log('[Auth] Auth flow cancelled or failed:', result.type);
-      return null;
+  } catch (error: any) {
+    if (error.message?.includes('Auth server') || error.message?.includes('OAuth URL')) {
+      throw error;
     }
-
-    // Parse any tokens or session info from the callback URL
-    console.log('[Auth] Callback URL:', result.url);
-    const parsed = Linking.parse(result.url);
-    const queryParams = parsed.queryParams || {};
-    let hashParams: Record<string, string> = {};
-
-    try {
-      const urlObj = new URL(result.url);
-      if (urlObj.hash) {
-        const hash = urlObj.hash.replace(/^#/, '');
-        hashParams = Object.fromEntries(new URLSearchParams(hash));
-      }
-    } catch {
-      // Ignore URL parse failures for custom schemes
-    }
-
-    const getParam = (key: string) =>
-      (queryParams[key] as string | undefined) ??
-      (hashParams[key] as string | undefined);
-
-    const token = getParam('token');
-    const code = getParam('code');
-    const sessionVerifier =
-      getParam('neon_auth_session_verifier') ||
-      getParam('neonAuthSessionVerifier');
-    const sessionToken =
-      getParam('session_token') ||
-      getParam('sessionToken') ||
-      getParam('session') ||
-      getParam('access_token');
-
-    console.log('[Auth] Callback params:', {
-      query: queryParams,
-      hash: hashParams,
-      tokenPresent: !!token,
-      sessionTokenPresent: !!sessionToken,
-      codePresent: !!code,
-      verifierPresent: !!sessionVerifier,
-    });
-
-    // Try to get session from Neon Auth using cookies or token
-    const user = await fetchUserFromSession({
-      sessionToken: sessionToken || null,
-      token: token || null,
-      verifier: sessionVerifier || null,
-    });
-    return user;
-  } catch (error) {
-    console.error('[Auth] Sign-in error:', error);
-    return null;
+    console.error('[Auth] Network error:', error);
+    throw new Error('Could not reach auth server. Check your internet connection.');
   }
+
+  // Step 2: Open the browser for Google sign-in
+  // On Android, openAuthSessionAsync uses Chrome Custom Tabs
+  // We listen for the deep link return (dropshare://auth-callback)
+  console.log('[Auth] Opening browser for OAuth...');
+  const result = await WebBrowser.openAuthSessionAsync(
+    googleAuthUrl,
+    appReturnUrl
+  );
+
+  if (result.type === 'cancel' || result.type === 'dismiss') {
+    console.log('[Auth] User cancelled sign-in');
+    return null; // User cancelled — not an error
+  }
+
+  if (result.type !== 'success' || !result.url) {
+    console.log('[Auth] Auth flow failed:', result.type);
+    throw new Error('Sign-in was interrupted. Please try again.');
+  }
+
+  // Step 3: Parse tokens from the callback URL
+  console.log('[Auth] Callback URL:', result.url);
+
+  const allParams = extractAllParams(result.url);
+  console.log('[Auth] Extracted params:', Object.keys(allParams));
+
+  const sessionToken =
+    allParams['session_token'] ||
+    allParams['sessionToken'] ||
+    allParams['session'] ||
+    allParams['access_token'] ||
+    allParams['token'];
+
+  const sessionVerifier =
+    allParams['neon_auth_session_verifier'] ||
+    allParams['neonAuthSessionVerifier'];
+
+  console.log('[Auth] Token present:', !!sessionToken, 'Verifier present:', !!sessionVerifier);
+
+  // Step 4: Get the user session from Neon Auth
+  const user = await fetchUserFromSession({
+    sessionToken: sessionToken || null,
+    verifier: sessionVerifier || null,
+  });
+
+  if (!user) {
+    throw new Error('Could not retrieve your account after sign-in. Please try again.');
+  }
+
+  return user;
 }
 
-async function captureSessionChallengeCookies(initUrl: string): Promise<void> {
+// Extract params from both query string and hash fragment
+function extractAllParams(url: string): Record<string, string> {
+  const params: Record<string, string> = {};
+
   try {
-    const res = await fetch(initUrl, { method: 'GET', redirect: 'manual' as any });
-    const setCookie = res.headers.get('set-cookie');
-    if (!setCookie) return;
-
-    const stateMatch = setCookie.match(/__Secure-neon-auth\\.state=([^;]+)/);
-    const aidMatch = setCookie.match(/__Secure-neon-auth\\.aid=([^;]+)/);
-    const cookies: string[] = [];
-
-    if (stateMatch) cookies.push(`__Secure-neon-auth.state=${stateMatch[1]}`);
-    if (aidMatch) cookies.push(`__Secure-neon-auth.aid=${aidMatch[1]}`);
-
-    if (cookies.length > 0) {
-      sessionChallengeCookies = cookies.join('; ');
+    // Try standard URL parsing
+    const urlObj = new URL(url);
+    urlObj.searchParams.forEach((value, key) => {
+      params[key] = value;
+    });
+    if (urlObj.hash) {
+      const hashParams = new URLSearchParams(urlObj.hash.replace(/^#/, ''));
+      hashParams.forEach((value, key) => {
+        if (!params[key]) params[key] = value;
+      });
     }
-  } catch (error) {
-    console.log('[Auth] Failed to capture challenge cookies');
+  } catch {
+    // For custom schemes that URL can't parse, use Linking
   }
+
+  // Also try Expo's Linking parser (handles custom schemes)
+  try {
+    const parsed = Linking.parse(url);
+    if (parsed.queryParams) {
+      Object.entries(parsed.queryParams).forEach(([key, value]) => {
+        if (value && typeof value === 'string' && !params[key]) {
+          params[key] = value;
+        }
+      });
+    }
+  } catch {
+    // Ignore
+  }
+
+  return params;
 }
 
 // ─── FETCH USER FROM SESSION ───
 
 async function fetchUserFromSession(params: {
   sessionToken: string | null;
-  token: string | null;
   verifier: string | null;
 }): Promise<User | null> {
   try {
-    const authToken = params.sessionToken || params.token;
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
     };
 
-    const cookieParts: string[] = [];
-    if (sessionChallengeCookies) {
-      cookieParts.push(sessionChallengeCookies);
-    }
-    if (authToken) {
-      headers['Authorization'] = `Bearer ${authToken}`;
-      cookieParts.push(`session_token=${authToken}`);
-    }
-
-    if (cookieParts.length > 0) {
-      headers['Cookie'] = cookieParts.join('; ');
+    if (params.sessionToken) {
+      headers['Authorization'] = `Bearer ${params.sessionToken}`;
+      headers['Cookie'] = `session_token=${params.sessionToken}`;
     }
 
     const verifierParam = params.verifier
       ? `?neon_auth_session_verifier=${encodeURIComponent(params.verifier)}`
       : '';
+
     const res = await fetch(`${NEON_AUTH_URL}/get-session${verifierParam}`, {
       method: 'GET',
       headers,
@@ -195,7 +190,8 @@ async function fetchUserFromSession(params: {
     }
 
     const data = await res.json();
-    console.log('[Auth] Session response:', data);
+    console.log('[Auth] Session response keys:', Object.keys(data));
+
     if (!data?.user) {
       console.log('[Auth] Session response has no user');
       return null;
@@ -205,7 +201,7 @@ async function fetchUserFromSession(params: {
     let plan: 'free' | 'pro' = 'free';
     let planExpiresAt: string | null = null;
 
-    if (!SIGNALING_SERVER_URL.startsWith('__')) {
+    if (SIGNALING_SERVER_URL && !SIGNALING_SERVER_URL.startsWith('__')) {
       try {
         const planRes = await fetch(`${SIGNALING_SERVER_URL}/user/${data.user.id}`);
         if (planRes.ok) {
@@ -214,7 +210,7 @@ async function fetchUserFromSession(params: {
           planExpiresAt = planData.user?.plan_expires_at || null;
         }
       } catch {
-        // Worker might not have user yet
+        // Worker might not have user yet — that's fine
       }
     }
 
@@ -230,7 +226,7 @@ async function fetchUserFromSession(params: {
     await storeUser(user);
 
     // Also sync to our worker DB (fire and forget)
-    if (!SIGNALING_SERVER_URL.startsWith('__')) {
+    if (SIGNALING_SERVER_URL && !SIGNALING_SERVER_URL.startsWith('__')) {
       fetch(`${SIGNALING_SERVER_URL}/auth/sync`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

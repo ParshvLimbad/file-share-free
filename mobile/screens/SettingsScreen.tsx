@@ -68,8 +68,10 @@ export default function SettingsScreen() {
         setUser(signedInUser);
         loadData(signedInUser);
       }
-    } catch (error) {
-      Alert.alert('Error', 'Sign-in failed. Please try again.');
+      // null means user cancelled — no error to show
+    } catch (error: any) {
+      const message = error?.message || 'Sign-in failed. Please try again.';
+      Alert.alert('Sign-in Error', message);
     } finally {
       setSigningIn(false);
     }
