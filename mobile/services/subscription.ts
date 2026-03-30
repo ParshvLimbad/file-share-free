@@ -107,14 +107,20 @@ export async function purchaseProSubscription(): Promise<boolean> {
   }
 
   try {
+    console.log('[Subscription] Fetching offerings...');
     const offerings = await Purchases.getOfferings();
+    console.log('[Subscription] Current offering:', offerings.current?.identifier);
+    console.log('[Subscription] Available packages:', offerings.current?.availablePackages?.length);
+    
     const proPackage = offerings.current?.availablePackages?.[0];
 
     if (!proPackage) {
-      Alert.alert('Error', 'No subscription packages available');
+      console.log('[Subscription] No packages found. All offerings:', JSON.stringify(Object.keys(offerings.all || {})));
+      Alert.alert('Error', 'No subscription packages available. Please ensure the subscription is active in Google Play Console.');
       return false;
     }
 
+    console.log('[Subscription] Purchasing package:', proPackage.identifier, proPackage.product?.identifier);
     const { customerInfo } = await Purchases.purchasePackage(proPackage);
     return !!customerInfo.entitlements.active['pro'];
   } catch (error: any) {
@@ -122,7 +128,8 @@ export async function purchaseProSubscription(): Promise<boolean> {
       return false;
     }
     console.error('[Subscription] Purchase error:', error);
-    Alert.alert('Error', 'Failed to process subscription');
+    const errorMsg = error?.message || error?.underlyingErrorMessage || 'Unknown error';
+    Alert.alert('Subscription Error', `Failed to process subscription.\n\n${errorMsg}`);
     return false;
   }
 }

@@ -33,6 +33,7 @@
       "expo-font",
       "expo-document-picker",
       "expo-web-browser",
+      "react-native-purchases",
       [
         "react-native-google-mobile-ads",
         {
