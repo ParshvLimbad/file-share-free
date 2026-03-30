@@ -2,7 +2,7 @@
   "expo": {
     "name": "Drop",
     "slug": "drop",
-    "version": "2.0.0",
+    "version": "5.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -33,7 +33,6 @@
       "expo-font",
       "expo-document-picker",
       "expo-web-browser",
-      "react-native-purchases",
       [
         "react-native-google-mobile-ads",
         {
